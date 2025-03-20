@@ -7,6 +7,7 @@ use std::{fs::File, io::BufReader};
 use async_io::{Timer, block_on};
 use clap::{Parser, Subcommand};
 use futures_lite::FutureExt;
+use log::{debug, error, info};
 use nusb::{
     Device, Interface, Speed,
     transfer::{ControlIn, ControlOut, ControlType, Direction, Recipient, RequestBuffer},
@@ -14,6 +15,8 @@ use nusb::{
 
 use zerocopy::{FromBytes, IntoBytes};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes};
+
+mod hwids;
 
 const QUALCOMM_VID: u16 = 0x05c6;
 const XX_PID: u16 = 0x9008;
@@ -159,9 +162,9 @@ fn usb_send(i: &Interface, addr: u8, data: Vec<u8>) {
 
 fn hello(i: &Interface, e_in_addr: u8) {
     let b = &usb_read(i, e_in_addr)[..32];
-    println!("Device says: {b:02x?}");
+    debug!("Device says: {b:02x?}");
     let (req, _) = HelloRequest::read_from_prefix(b).unwrap();
-    println!("Request: {req:#02x?}");
+    debug!("Request: {req:#02x?}");
 }
 
 fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
@@ -176,7 +179,7 @@ fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
         mode: MODE_COMMAND,
     };
 
-    println!("send {res:#02x?}");
+    debug!("send {res:#02x?}");
 
     let mut r = res.as_bytes().to_vec();
     let wtf = [1u32, 2, 3, 4, 5, 6].as_bytes().to_vec();
@@ -185,17 +188,17 @@ fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
 
     usb_send(i, e_out_addr, r);
     let b = &usb_read(i, e_in_addr)[..32];
-    println!("Device says: {b:02x?}");
+    debug!("Device says: {b:02x?}");
 
     let cmd = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
 
     match cmd {
+        COMMAND_READY => {
+            debug!("command ready");
+        }
         COMMAND_END_OF_TRANSFER => {
             let (p, _) = EndOfTransfer::read_from_prefix(b).unwrap();
             panic!("{p:#02x?}");
-        }
-        COMMAND_READY => {
-            println!("command ready");
         }
         _ => panic!("..."),
     }
@@ -204,13 +207,13 @@ fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     usb_send(i, e_out_addr, r.to_vec());
 
     let b = &usb_read(i, e_in_addr)[..32];
-    println!("Device says: {b:02x?}");
+    debug!("Device says: {b:02x?}");
 
     let cmd = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
 
     match cmd {
         COMMAND_EXECUTE_RESPONSE => {
-            println!("execute response");
+            debug!("execute response");
         }
         _ => panic!("..."),
     }
@@ -218,22 +221,23 @@ fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     let r = [COMMAND_EXECUTE_DATA, 0xc, EXEC_MSM_HW_ID_READ].as_bytes();
     usb_send(i, e_out_addr, r.to_vec());
 
-    let b = &usb_read(i, e_in_addr)[..8];
-    let mut id = b.to_vec();
-    id.reverse();
-    println!("MSM hardware ID: {id:02x?}");
+    let b = &usb_read(i, e_in_addr);
+    let id = [b[4], b[5], b[6], b[7]];
+    let id = u32::from_le_bytes(id);
+    let name = hwids::hwid_to_name(id);
+    println!("MSM hardware ID: {id:08x} ({name})");
 
     let r = [COMMAND_EXECUTE_REQUEST, 0xc, EXEC_SERIAL_NUM_READ].as_bytes();
     usb_send(i, e_out_addr, r.to_vec());
 
     let b = &usb_read(i, e_in_addr)[..32];
-    println!("Device says: {b:02x?}");
+    debug!("Device says: {b:02x?}");
 
     let cmd = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
 
     match cmd {
         COMMAND_EXECUTE_RESPONSE => {
-            println!("execute response");
+            debug!("execute response");
         }
         _ => panic!("..."),
     }
@@ -292,6 +296,10 @@ struct Cli {
 */
 
 fn main() {
+    // Default to log level "info". Otherwise, you get no "regular" logs.
+    let env = env_logger::Env::default().default_filter_or("info");
+    env_logger::Builder::from_env(env).init();
+
     let cmd = Cli::parse().cmd;
 
     let di = nusb::list_devices()
@@ -300,7 +308,7 @@ fn main() {
         .expect("Device not found, is it connected and in the right mode?");
     let ms = di.manufacturer_string().unwrap_or("[no manufacturer]");
     let ps = di.product_string().unwrap();
-    println!("Found {ms} {ps}");
+    info!("Found {ms} {ps}");
 
     // Just use the first interface
     let ii = di.interfaces().next().unwrap().interface_number();
@@ -314,7 +322,7 @@ fn main() {
         Speed::Super | Speed::SuperPlus => 1024,
         _ => panic!("Unknown USB device speed {speed:?}"),
     };
-    println!("speed {speed:?} - max packet size: {packet_size}");
+    debug!("speed {speed:?} - max packet size: {packet_size}");
 
     // TODO: Nice error messages when either is not found
     // We may also hardcode the endpoint to 0x01.
@@ -330,7 +338,7 @@ fn main() {
     let e_in_addr = e_in.address();
 
     for e in es {
-        println!("{e:?}");
+        debug!("{e:?}");
     }
 
     hello(&i, e_in_addr);
