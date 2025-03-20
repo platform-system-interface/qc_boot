@@ -192,17 +192,14 @@ fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     match cmd {
         COMMAND_END_OF_TRANSFER => {
             let (p, _) = EndOfTransfer::read_from_prefix(b).unwrap();
-            println!("{p:#02x?}");
+            panic!("{p:#02x?}");
         }
         COMMAND_READY => {
-            //let (p, _) = CommandReady::read_from_prefix(&buf).unwrap();
-            //println!("{p:#02x?}");
             println!("command ready");
         }
-        _ => println!("..."),
+        _ => panic!("..."),
     }
 
-    // let r = [COMMAND_EXECUTE_REQUEST, 0xc, EXEC_SERIAL_NUM_READ].as_bytes();
     let r = [COMMAND_EXECUTE_REQUEST, 0xc, EXEC_MSM_HW_ID_READ].as_bytes();
     usb_send(i, e_out_addr, r.to_vec());
 
@@ -218,7 +215,6 @@ fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
         _ => panic!("..."),
     }
 
-    // let r = [COMMAND_EXECUTE_DATA, 0xc, EXEC_SERIAL_NUM_READ].as_bytes();
     let r = [COMMAND_EXECUTE_DATA, 0xc, EXEC_MSM_HW_ID_READ].as_bytes();
     usb_send(i, e_out_addr, r.to_vec());
 
@@ -226,6 +222,29 @@ fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     let mut id = b.to_vec();
     id.reverse();
     println!("MSM hardware ID: {id:02x?}");
+
+    let r = [COMMAND_EXECUTE_REQUEST, 0xc, EXEC_SERIAL_NUM_READ].as_bytes();
+    usb_send(i, e_out_addr, r.to_vec());
+
+    let b = &usb_read(i, e_in_addr)[..32];
+    println!("Device says: {b:02x?}");
+
+    let cmd = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+
+    match cmd {
+        COMMAND_EXECUTE_RESPONSE => {
+            println!("execute response");
+        }
+        _ => panic!("..."),
+    }
+
+    let r = [COMMAND_EXECUTE_DATA, 0xc, EXEC_SERIAL_NUM_READ].as_bytes();
+    usb_send(i, e_out_addr, r.to_vec());
+
+    let b = &usb_read(i, e_in_addr)[..8];
+    let mut id = b.to_vec();
+    id.reverse();
+    println!("Serial number: {id:02x?}");
 
     // S/N: [78 9e e2 1b]
     //
