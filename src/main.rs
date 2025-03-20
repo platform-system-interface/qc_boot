@@ -245,11 +245,6 @@ fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     let mut id = b.to_vec();
     id.reverse();
     println!("Serial number: {id:02x?}");
-
-    // S/N: [78 9e e2 1b]
-    //
-    // MSM HW ID 007F10E1: MDM9225
-    // https://clickgsm.ro/software-factory/qualcomm-snapdragon-x5-modem-mdm9225-1--6om/
 }
 
 #[derive(Debug, Subcommand)]
