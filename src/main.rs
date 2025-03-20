@@ -13,7 +13,7 @@ use nusb::{
 };
 
 use zerocopy::{FromBytes, IntoBytes};
-use zerocopy_derive::{FromBytes, IntoBytes};
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes};
 
 const QUALCOMM_VID: u16 = 0x05c6;
 const XX_PID: u16 = 0x9008;
@@ -39,7 +39,7 @@ fn claim_interface(d: &Device, ii: u8) -> std::result::Result<Interface, String>
     Err("failure claiming USB interface".into())
 }
 
-#[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
 #[repr(C, packed)]
 struct PacketHeader {
     command: u32,
@@ -56,7 +56,7 @@ struct HelloRequest {
     mode: u32,
 }
 
-#[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
 #[repr(C, packed)]
 struct HelloResponse {
     header: PacketHeader,
@@ -86,7 +86,7 @@ struct ReadRequest64 {
 
 #[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
 #[repr(C, packed)]
-struct EndOfImage {
+struct EndOfTransfer {
     header: PacketHeader,
     image: u32,
     status: u32,
@@ -99,16 +99,31 @@ struct DoneResponse {
     status: u32,
 }
 
+// protocol thingies
+const COMMAND_HELLO: u32 = 2;
+const COMMAND_END_OF_TRANSFER: u32 = 4;
+const COMMAND_READY: u32 = 0xb;
+const COMMAND_EXECUTE_REQUEST: u32 = 0xd;
+const COMMAND_EXECUTE_RESPONSE: u32 = 0xe;
+const COMMAND_EXECUTE_DATA: u32 = 0xf;
+
+// protocol modes
+const MODE_COMMAND: u32 = 3;
+
+// actual commands
+const EXEC_SERIAL_NUM_READ: u32 = 0x01;
+const EXEC_MSM_HW_ID_READ: u32 = 0x02;
+
 const TRANSFER_SIZE: usize = 4096;
 
-fn hello(i: &Interface, e_in_addr: u8) {
+fn usb_read(i: &Interface, addr: u8) -> [u8; TRANSFER_SIZE] {
     let mut buf = [0_u8; TRANSFER_SIZE];
 
     let _: Result<usize> = {
         let timeout = Duration::from_secs(5);
         let fut = async {
             let b = RequestBuffer::new(TRANSFER_SIZE);
-            let comp = i.bulk_in(e_in_addr, b).await;
+            let comp = i.bulk_in(addr, b).await;
             comp.status.map_err(io::Error::other)?;
 
             let n = comp.data.len();
@@ -122,24 +137,100 @@ fn hello(i: &Interface, e_in_addr: u8) {
         }))
     };
 
-    let b = &buf[..32];
-    println!("Device says: {b:02x?}");
+    buf
+}
 
-    /*
-    HelloRequest {
+fn usb_send(i: &Interface, addr: u8, data: Vec<u8>) {
+    let _: Result<usize> = {
+        let timeout = Duration::from_secs(5);
+        let fut = async {
+            let comp = i.bulk_out(addr, data).await;
+            comp.status.map_err(io::Error::other)?;
+            let n = comp.data.actual_length();
+            Ok(n)
+        };
+
+        block_on(fut.or(async {
+            Timer::after(timeout).await;
+            Err(TimedOut.into())
+        }))
+    };
+}
+
+fn hello(i: &Interface, e_in_addr: u8) {
+    let b = &usb_read(i, e_in_addr)[..32];
+    println!("Device says: {b:02x?}");
+    let (req, _) = HelloRequest::read_from_prefix(b).unwrap();
+    println!("Request: {req:#02x?}");
+}
+
+fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
+    let res = HelloResponse {
         header: PacketHeader {
-            command: 0x1,
+            command: COMMAND_HELLO,
             length: 0x30,
         },
-        version: 0x2,
-        compatible: 0x1,
-        max_len: 0x400,
-        mode: 0x0,
-    },
-    */
+        version: 2,
+        compatible: 1, // aka version_min
+        status: 0,     // aka max_cmd_len
+        mode: MODE_COMMAND,
+    };
 
-    let req = HelloRequest::read_from_prefix(b);
-    println!("Request: {req:#02x?}");
+    println!("send {res:#02x?}");
+
+    let mut r = res.as_bytes().to_vec();
+    let wtf = [1u32, 2, 3, 4, 5, 6].as_bytes().to_vec();
+
+    r.append(&mut wtf.to_vec());
+
+    usb_send(i, e_out_addr, r);
+    let b = &usb_read(i, e_in_addr)[..32];
+    println!("Device says: {b:02x?}");
+
+    let cmd = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+
+    match cmd {
+        COMMAND_END_OF_TRANSFER => {
+            let (p, _) = EndOfTransfer::read_from_prefix(b).unwrap();
+            println!("{p:#02x?}");
+        }
+        COMMAND_READY => {
+            //let (p, _) = CommandReady::read_from_prefix(&buf).unwrap();
+            //println!("{p:#02x?}");
+            println!("command ready");
+        }
+        _ => println!("..."),
+    }
+
+    // let r = [COMMAND_EXECUTE_REQUEST, 0xc, EXEC_SERIAL_NUM_READ].as_bytes();
+    let r = [COMMAND_EXECUTE_REQUEST, 0xc, EXEC_MSM_HW_ID_READ].as_bytes();
+    usb_send(i, e_out_addr, r.to_vec());
+
+    let b = &usb_read(i, e_in_addr)[..32];
+    println!("Device says: {b:02x?}");
+
+    let cmd = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+
+    match cmd {
+        COMMAND_EXECUTE_RESPONSE => {
+            println!("execute response");
+        }
+        _ => panic!("..."),
+    }
+
+    // let r = [COMMAND_EXECUTE_DATA, 0xc, EXEC_SERIAL_NUM_READ].as_bytes();
+    let r = [COMMAND_EXECUTE_DATA, 0xc, EXEC_MSM_HW_ID_READ].as_bytes();
+    usb_send(i, e_out_addr, r.to_vec());
+
+    let b = &usb_read(i, e_in_addr)[..8];
+    let mut id = b.to_vec();
+    id.reverse();
+    println!("MSM hardware ID: {id:02x?}");
+
+    // S/N: [78 9e e2 1b]
+    //
+    // MSM HW ID 007F10E1: MDM9225
+    // https://clickgsm.ro/software-factory/qualcomm-snapdragon-x5-modem-mdm9225-1--6om/
 }
 
 #[derive(Debug, Subcommand)]
@@ -230,5 +321,9 @@ fn main() {
 
     hello(&i, e_in_addr);
 
-    // TODO: commands
+    match cmd {
+        Command::Info => info(&i, e_in_addr, e_out_addr),
+        // TODO
+        _ => {}
+    }
 }
