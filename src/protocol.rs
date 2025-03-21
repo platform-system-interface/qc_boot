@@ -152,8 +152,22 @@ struct DoneResponse {
     status: u32,
 }
 
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
+#[repr(C, packed)]
+struct HardwareId {
+    _x: u32,
+    id: u32,
+}
+
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
+#[repr(C, packed)]
+struct SerialNo {
+    serial: [u8; 8],
+}
+
 // protocol thingies
-const COMMAND_HELLO: u32 = 2;
+const COMMAND_HELLO_REQUEST: u32 = 1;
+const COMMAND_HELLO_RESPONSE: u32 = 2;
 const COMMAND_END_OF_TRANSFER: u32 = 4;
 const COMMAND_READY: u32 = 0xb;
 const COMMAND_EXECUTE_REQUEST: u32 = 0xd;
@@ -215,12 +229,16 @@ pub fn hello(i: &Interface, e_in_addr: u8) {
     debug!("Device says: {b:02x?}");
     let (req, _) = HelloRequest::read_from_prefix(b).unwrap();
     debug!("Request: {req:#02x?}");
+    let cmd = req.header.command;
+    assert_eq!(cmd, COMMAND_HELLO_REQUEST);
 }
 
 pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
+    // As unusual as it is, we get a _request_ first, so we _send a response_.
+    // See hello() in which we take the request.
     let res = HelloResponse {
         header: PacketHeader {
-            command: COMMAND_HELLO,
+            command: COMMAND_HELLO_RESPONSE,
             length: 0x30,
         },
         version: 2,
@@ -228,52 +246,35 @@ pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
         status: 0,     // aka max_cmd_len
         mode: MODE_COMMAND,
     };
-
     debug!("send {res:#02x?}");
-
     let mut r = res.as_bytes().to_vec();
-    let wtf = [1u32, 2, 3, 4, 5, 6].as_bytes().to_vec();
-
-    r.append(&mut wtf.to_vec());
-
+    // We got this from https://github.com/bkerler/edl.
+    // see edlclient/Library/sahara.py cmd_hello()
+    let ottffs = [1u32, 2, 3, 4, 5, 6].as_bytes().to_vec();
+    r.append(&mut ottffs.to_vec());
     usb_send(i, e_out_addr, r);
+
     let b = &usb_read(i, e_in_addr)[..32];
     debug!("Device says: {b:02x?}");
-
-    let cmd = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-
-    match cmd {
-        COMMAND_READY => {
-            debug!("command ready");
-        }
-        COMMAND_END_OF_TRANSFER => {
-            let (p, _) = EndOfTransfer::read_from_prefix(b).unwrap();
-            panic!("{p:#02x?}");
-        }
-        _ => panic!("..."),
-    }
+    let (header, _) = PacketHeader::read_from_prefix(b).unwrap();
+    let cmd = header.command;
+    assert_eq!(cmd, COMMAND_READY);
 
     let r = [COMMAND_EXECUTE_REQUEST, 0xc, EXEC_MSM_HW_ID_READ].as_bytes();
     usb_send(i, e_out_addr, r.to_vec());
 
     let b = &usb_read(i, e_in_addr)[..32];
     debug!("Device says: {b:02x?}");
-
-    let cmd = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-
-    match cmd {
-        COMMAND_EXECUTE_RESPONSE => {
-            debug!("execute response");
-        }
-        _ => panic!("..."),
-    }
+    let (header, _) = PacketHeader::read_from_prefix(b).unwrap();
+    let cmd = header.command;
+    assert_eq!(cmd, COMMAND_EXECUTE_RESPONSE);
 
     let r = [COMMAND_EXECUTE_DATA, 0xc, EXEC_MSM_HW_ID_READ].as_bytes();
     usb_send(i, e_out_addr, r.to_vec());
 
     let b = &usb_read(i, e_in_addr);
-    let id = [b[4], b[5], b[6], b[7]];
-    let id = u32::from_le_bytes(id);
+    let (hwid, _) = HardwareId::read_from_prefix(b).unwrap();
+    let id = hwid.id;
     let name = hwids::hwid_to_name(id);
     println!("MSM hardware ID: {id:08x} ({name})");
 
@@ -282,21 +283,17 @@ pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
 
     let b = &usb_read(i, e_in_addr)[..32];
     debug!("Device says: {b:02x?}");
-
-    let cmd = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-
-    match cmd {
-        COMMAND_EXECUTE_RESPONSE => {
-            debug!("execute response");
-        }
-        _ => panic!("..."),
-    }
+    let (header, _) = PacketHeader::read_from_prefix(b).unwrap();
+    let cmd = header.command;
+    assert_eq!(cmd, COMMAND_EXECUTE_RESPONSE);
 
     let r = [COMMAND_EXECUTE_DATA, 0xc, EXEC_SERIAL_NUM_READ].as_bytes();
     usb_send(i, e_out_addr, r.to_vec());
 
-    let b = &usb_read(i, e_in_addr)[..8];
-    let mut id = b.to_vec();
-    id.reverse();
-    println!("Serial number: {id:02x?}");
+    let b = &usb_read(i, e_in_addr);
+    debug!("Device says: {b:02x?}");
+    let (serial, _) = SerialNo::read_from_prefix(b).unwrap();
+    // TODO: Which bytes do we really need?
+    let serial = serial.serial;
+    println!("Serial number: {serial:02x?}");
 }
