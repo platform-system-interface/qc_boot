@@ -217,6 +217,9 @@ fn usb_read(i: &Interface, addr: u8) -> [u8; TRANSFER_SIZE] {
         }))
     };
 
+    let b = &buf[..128];
+    debug!("Device says: {b:02x?}");
+
     buf
 }
 
@@ -238,8 +241,7 @@ fn usb_send(i: &Interface, addr: u8, data: Vec<u8>) {
 }
 
 pub fn hello(i: &Interface, e_in_addr: u8) {
-    let b = &usb_read(i, e_in_addr)[..32];
-    debug!("Device says: {b:02x?}");
+    let b = &usb_read(i, e_in_addr);
     let (req, _) = HelloRequest::read_from_prefix(b).unwrap();
     debug!("Request: {req:#02x?}");
     let cmd = req.header.command;
@@ -267,32 +269,39 @@ fn switch_mode_to_command(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     r.append(&mut ottffs.to_vec());
     usb_send(i, e_out_addr, r);
 
-    let b = &usb_read(i, e_in_addr)[..32];
-    debug!("Device says: {b:02x?}");
+    let b = &usb_read(i, e_in_addr);
     let (header, _) = PacketHeader::read_from_prefix(b).unwrap();
     let cmd = header.command;
     assert_eq!(cmd, COMMAND_READY);
 }
 
 // NOTE: This is a two-step thing. Read the data response afterwards,
-fn exec(i: &Interface, e_in_addr: u8, e_out_addr: u8, exec_cmd: u32) {
+fn exec(
+    i: &Interface,
+    e_in_addr: u8,
+    e_out_addr: u8,
+    exec_cmd: u32,
+) -> std::result::Result<(), String> {
+    // TODO: struct
     let r = [COMMAND_EXECUTE_REQUEST, 0xc, exec_cmd];
     usb_send(i, e_out_addr, r.as_bytes().to_vec());
 
-    let b = &usb_read(i, e_in_addr)[..32];
-    debug!("Device says: {b:02x?}");
+    let b = &usb_read(i, e_in_addr);
     let (header, _) = PacketHeader::read_from_prefix(b).unwrap();
     let cmd = header.command;
-    assert_eq!(cmd, COMMAND_EXECUTE_RESPONSE);
+    // NOTE: this may get a SAHARA_END_TRANSFER; may mean command not found
+    if cmd != COMMAND_EXECUTE_RESPONSE {
+        return Err(format!("xx maybe cmd invalid {cmd:02x}"));
+    }
 
     let r = [COMMAND_EXECUTE_DATA, 0xc, exec_cmd];
     usb_send(i, e_out_addr, r.as_bytes().to_vec());
+    Ok(())
 }
 
 pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     switch_mode_to_command(i, e_in_addr, e_out_addr);
-
-    exec(i, e_in_addr, e_out_addr, EXEC_GET_HARDWARE_ID);
+    exec(i, e_in_addr, e_out_addr, EXEC_GET_HARDWARE_ID).unwrap();
     let b = &usb_read(i, e_in_addr);
     let (d, _) = HardwareId::read_from_prefix(b).unwrap();
     let HardwareId { model, oem, id } = d;
@@ -302,17 +311,15 @@ pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     println!("OEM: {model:04x}");
     println!("Model: {oem:04x}");
 
-    exec(i, e_in_addr, e_out_addr, EXEC_GET_SERIAL_NUM);
+    exec(i, e_in_addr, e_out_addr, EXEC_GET_SERIAL_NUM).unwrap();
     let b = &usb_read(i, e_in_addr);
-    debug!("Device says: {b:02x?}");
     let (d, _) = SerialNo::read_from_prefix(b).unwrap();
     // TODO: Which bytes do we really need?
     let serial = d.serial;
     println!("Serial number: {serial:02x?}");
 
-    exec(i, e_in_addr, e_out_addr, EXEC_GET_OEM_PK_HASH);
+    exec(i, e_in_addr, e_out_addr, EXEC_GET_OEM_PK_HASH).unwrap();
     let b = &usb_read(i, e_in_addr);
-    debug!("Device says: {b:02x?}");
     // There is a condition in https://github.com/bkerler/edl that searches for
     // a second occurrence of the first 4 bytes again in the other bytes, then
     // takes [4+p..], where p is the position where it is found again. Wtf?
