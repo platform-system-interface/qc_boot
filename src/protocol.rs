@@ -178,8 +178,12 @@ const COMMAND_EXECUTE_DATA: u32 = 0xf;
 const MODE_COMMAND: u32 = 3;
 
 // actual commands
-const EXEC_SERIAL_NUM_READ: u32 = 0x01;
-const EXEC_MSM_HW_ID_READ: u32 = 0x02;
+const EXEC_GET_SERIAL_NUM: u32 = 0x01;
+const EXEC_GET_HARDWARE_ID: u32 = 0x02;
+const EXEC_GET_OEM_PK_HASH: u32 = 0x03;
+const EXEC_GET_SBL_VERSION: u32 = 0x07;
+const EXEC_GET_COMMAND_ID_LIST: u32 = 0x08;
+const EXEC_GET_TRAINING_DATA: u32 = 0x09;
 
 const TRANSFER_SIZE: usize = 4096;
 
@@ -233,7 +237,7 @@ pub fn hello(i: &Interface, e_in_addr: u8) {
     assert_eq!(cmd, COMMAND_HELLO_REQUEST);
 }
 
-pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
+fn switch_mode_to_command(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     // As unusual as it is, we get a _request_ first, so we _send a response_.
     // See hello() in which we take the request.
     let res = HelloResponse {
@@ -259,9 +263,12 @@ pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     let (header, _) = PacketHeader::read_from_prefix(b).unwrap();
     let cmd = header.command;
     assert_eq!(cmd, COMMAND_READY);
+}
 
-    let r = [COMMAND_EXECUTE_REQUEST, 0xc, EXEC_MSM_HW_ID_READ].as_bytes();
-    usb_send(i, e_out_addr, r.to_vec());
+// NOTE: This is a two-step thing. Read the data response afterwards,
+fn exec(i: &Interface, e_in_addr: u8, e_out_addr: u8, exec_cmd: u32) {
+    let r = [COMMAND_EXECUTE_REQUEST, 0xc, exec_cmd];
+    usb_send(i, e_out_addr, r.as_bytes().to_vec());
 
     let b = &usb_read(i, e_in_addr)[..32];
     debug!("Device says: {b:02x?}");
@@ -269,27 +276,21 @@ pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     let cmd = header.command;
     assert_eq!(cmd, COMMAND_EXECUTE_RESPONSE);
 
-    let r = [COMMAND_EXECUTE_DATA, 0xc, EXEC_MSM_HW_ID_READ].as_bytes();
-    usb_send(i, e_out_addr, r.to_vec());
+    let r = [COMMAND_EXECUTE_DATA, 0xc, exec_cmd];
+    usb_send(i, e_out_addr, r.as_bytes().to_vec());
+}
 
+pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
+    switch_mode_to_command(i, e_in_addr, e_out_addr);
+
+    exec(i, e_in_addr, e_out_addr, EXEC_GET_HARDWARE_ID);
     let b = &usb_read(i, e_in_addr);
     let (hwid, _) = HardwareId::read_from_prefix(b).unwrap();
     let id = hwid.id;
     let name = hwids::hwid_to_name(id);
-    println!("MSM hardware ID: {id:08x} ({name})");
+    println!("Hardware ID: {id:08x} ({name})");
 
-    let r = [COMMAND_EXECUTE_REQUEST, 0xc, EXEC_SERIAL_NUM_READ].as_bytes();
-    usb_send(i, e_out_addr, r.to_vec());
-
-    let b = &usb_read(i, e_in_addr)[..32];
-    debug!("Device says: {b:02x?}");
-    let (header, _) = PacketHeader::read_from_prefix(b).unwrap();
-    let cmd = header.command;
-    assert_eq!(cmd, COMMAND_EXECUTE_RESPONSE);
-
-    let r = [COMMAND_EXECUTE_DATA, 0xc, EXEC_SERIAL_NUM_READ].as_bytes();
-    usb_send(i, e_out_addr, r.to_vec());
-
+    exec(i, e_in_addr, e_out_addr, EXEC_GET_SERIAL_NUM);
     let b = &usb_read(i, e_in_addr);
     debug!("Device says: {b:02x?}");
     let (serial, _) = SerialNo::read_from_prefix(b).unwrap();
