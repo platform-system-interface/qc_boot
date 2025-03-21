@@ -155,7 +155,8 @@ struct DoneResponse {
 #[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
 #[repr(C, packed)]
 struct HardwareId {
-    _x: u32,
+    model: u16,
+    oem: u16,
     id: u32,
 }
 
@@ -294,9 +295,12 @@ pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     exec(i, e_in_addr, e_out_addr, EXEC_GET_HARDWARE_ID);
     let b = &usb_read(i, e_in_addr);
     let (d, _) = HardwareId::read_from_prefix(b).unwrap();
-    let id = d.id;
+    let HardwareId { model, oem, id } = d;
     let name = hwids::hwid_to_name(id);
     println!("Hardware ID: {id:08x} ({name})");
+    // TODO: map OEM + model to string names
+    println!("OEM: {model:04x}");
+    println!("Model: {oem:04x}");
 
     exec(i, e_in_addr, e_out_addr, EXEC_GET_SERIAL_NUM);
     let b = &usb_read(i, e_in_addr);
