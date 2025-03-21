@@ -165,6 +165,14 @@ struct SerialNo {
     serial: [u8; 8],
 }
 
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
+#[repr(C, packed)]
+struct OemPkHash {
+    hash1: [u8; 32],
+    hash2: [u8; 32],
+    hash3: [u8; 32],
+}
+
 // protocol thingies
 const COMMAND_HELLO_REQUEST: u32 = 1;
 const COMMAND_HELLO_RESPONSE: u32 = 2;
@@ -285,16 +293,34 @@ pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
 
     exec(i, e_in_addr, e_out_addr, EXEC_GET_HARDWARE_ID);
     let b = &usb_read(i, e_in_addr);
-    let (hwid, _) = HardwareId::read_from_prefix(b).unwrap();
-    let id = hwid.id;
+    let (d, _) = HardwareId::read_from_prefix(b).unwrap();
+    let id = d.id;
     let name = hwids::hwid_to_name(id);
     println!("Hardware ID: {id:08x} ({name})");
 
     exec(i, e_in_addr, e_out_addr, EXEC_GET_SERIAL_NUM);
     let b = &usb_read(i, e_in_addr);
     debug!("Device says: {b:02x?}");
-    let (serial, _) = SerialNo::read_from_prefix(b).unwrap();
+    let (d, _) = SerialNo::read_from_prefix(b).unwrap();
     // TODO: Which bytes do we really need?
-    let serial = serial.serial;
+    let serial = d.serial;
     println!("Serial number: {serial:02x?}");
+
+    exec(i, e_in_addr, e_out_addr, EXEC_GET_OEM_PK_HASH);
+    let b = &usb_read(i, e_in_addr);
+    debug!("Device says: {b:02x?}");
+    // There is a condition in https://github.com/bkerler/edl that searches for
+    // a second occurrence of the first 4 bytes again in the other bytes, then
+    // takes [4+p..], where p is the position where it is found again. Wtf?
+    // AFAICT, there is just 3x the same hash.
+    let (d, _) = OemPkHash::read_from_prefix(b).unwrap();
+    let OemPkHash {
+        hash1,
+        hash2,
+        hash3,
+    } = d;
+    println!("OEM PK hashes:");
+    println!("  {hash1:02x?}");
+    println!("  {hash2:02x?}");
+    println!("  {hash3:02x?}");
 }
