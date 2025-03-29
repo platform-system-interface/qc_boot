@@ -95,17 +95,17 @@ pub fn connect() -> (Interface, u8, u8) {
 #[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
 #[repr(C, packed)]
 struct PacketHeader {
-    command: u32,
+    message_type: u32,
     length: u32,
 }
 
-#[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
 #[repr(C, packed)]
 struct HelloRequest {
     header: PacketHeader,
     version: u32,
     compatible: u32,
-    max_len: u32,
+    max_len: u32, // max msg/"cmd" length
     mode: u32,
 }
 
@@ -114,12 +114,31 @@ struct HelloRequest {
 struct HelloResponse {
     header: PacketHeader,
     version: u32,
-    compatible: u32,
-    status: u32,
+    compatible: u32, // aka version_min
+    status: u32,     // aka max_cmd_len
     mode: u32,
+    rest: [u32; 6],
 }
 
-#[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
+const HELLO_RESPONSE_SIZE: u32 = std::mem::size_of::<HelloResponse>() as u32;
+
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
+#[repr(C, packed)]
+struct ResetRequest {
+    header: PacketHeader,
+}
+
+const RESET_REQUEST_SIZE: u32 = std::mem::size_of::<ResetRequest>() as u32;
+
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
+#[repr(C, packed)]
+struct DoneRequest {
+    header: PacketHeader,
+}
+
+const DONE_REQUEST_SIZE: u32 = std::mem::size_of::<DoneRequest>() as u32;
+
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
 #[repr(C, packed)]
 struct ReadRequest32 {
     header: PacketHeader,
@@ -128,7 +147,7 @@ struct ReadRequest32 {
     length: u32,
 }
 
-#[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
 #[repr(C, packed)]
 struct ReadRequest64 {
     header: PacketHeader,
@@ -137,7 +156,8 @@ struct ReadRequest64 {
     length: u64,
 }
 
-#[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
+/// Response to all sorts of requests, may indicate an error.
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
 #[repr(C, packed)]
 struct EndOfTransfer {
     header: PacketHeader,
@@ -145,14 +165,37 @@ struct EndOfTransfer {
     status: u32,
 }
 
-#[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
 #[repr(C, packed)]
 struct DoneResponse {
     header: PacketHeader,
     status: u32,
 }
 
-#[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
+/// This is both for request and data.
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
+#[repr(C, packed)]
+struct Exec {
+    header: PacketHeader,
+    command: u32,
+}
+
+const EXEC_SIZE: u32 = std::mem::size_of::<Exec>() as u32;
+
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
+#[repr(C, packed)]
+struct MemoryRead32 {
+    header: PacketHeader,
+    address: u32,
+    size: u32,
+}
+
+const MEMORY_READ_SIZE: u32 = core::mem::size_of::<MemoryRead32>() as u32;
+
+/* ----- command exec response data ----- */
+
+/// Response data to hardware ID command.
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
 #[repr(C, packed)]
 struct HardwareId {
     model: u16,
@@ -160,13 +203,15 @@ struct HardwareId {
     id: u32,
 }
 
-#[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
+/// Response data to serial number command.
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
 #[repr(C, packed)]
 struct SerialNo {
     serial: [u8; 8],
 }
 
-#[derive(Clone, Debug, Copy, FromBytes, IntoBytes)]
+/// Response data to OEM PK hash command.
+#[derive(Clone, Debug, Copy, FromBytes, IntoBytes, Immutable)]
 #[repr(C, packed)]
 struct OemPkHash {
     hash1: [u8; 32],
@@ -174,35 +219,61 @@ struct OemPkHash {
     hash3: [u8; 32],
 }
 
-// protocol thingies
-const COMMAND_HELLO_REQUEST: u32 = 1;
-const COMMAND_HELLO_RESPONSE: u32 = 2;
-const COMMAND_END_OF_TRANSFER: u32 = 4;
-const COMMAND_READY: u32 = 0xb;
-const COMMAND_EXECUTE_REQUEST: u32 = 0xd;
-const COMMAND_EXECUTE_RESPONSE: u32 = 0xe;
-const COMMAND_EXECUTE_DATA: u32 = 0xf;
+// Sahara message types
+const SAHARA_HELLO_REQUEST: u32 = 0x1;
+const SAHARA_HELLO_RESPONSE: u32 = 0x2;
+const SAHARA_READ_DATA: u32 = 0x3;
+const SAHARA_END_OF_TRANSFER: u32 = 0x4;
+const SAHARA_DONE_REQUEST: u32 = 0x5;
+const SAHARA_DONE_RESPONSE: u32 = 0x6;
+const SAHARA_RESET_REQUEST: u32 = 0x7;
+const SAHARA_RESET_RESPONSE: u32 = 0x8;
+const SAHARA_MEMORY_DEBUG: u32 = 0x9;
+const SAHARA_MEMORY_READ: u32 = 0xa;
+const SAHARA_READY: u32 = 0xb;
+// TODO: use this
+const SAHARA_SWITCH_MODE: u32 = 0xc;
+const SAHARA_EXECUTE_REQUEST: u32 = 0xd;
+const SAHARA_EXECUTE_RESPONSE: u32 = 0xe;
+const SAHARA_EXECUTE_DATA: u32 = 0xf;
+const SAHARA_64BIT_MEMORY_DEBUG: u32 = 0x10;
+const SAHARA_64BIT_MEMORY_READ: u32 = 0x11;
+const SAHARA_64BIT_MEMORY_READ_DATA: u32 = 0x12;
+const SAHARA_RESET_STATE_MACHINE_ID: u32 = 0x13;
 
 // protocol modes
-const MODE_COMMAND: u32 = 3;
+#[repr(u32)]
+pub enum Mode {
+    ImageTxPending = 0,
+    ImageTxComplete = 1,
+    MemoryDebug = 2,
+    Command = 3,
+}
 
-// actual commands
-const EXEC_GET_SERIAL_NUM: u32 = 0x01;
-const EXEC_GET_HARDWARE_ID: u32 = 0x02;
-const EXEC_GET_OEM_PK_HASH: u32 = 0x03;
-const EXEC_GET_SBL_VERSION: u32 = 0x07;
-const EXEC_GET_COMMAND_ID_LIST: u32 = 0x08;
-const EXEC_GET_TRAINING_DATA: u32 = 0x09;
+#[repr(u32)]
+#[derive(Clone, Debug, Copy, IntoBytes, Immutable)]
+enum Command {
+    None = 0,
+    GetSerialNum = 0x01,
+    GetHardwareId = 0x02,
+    GetOemPkHash = 0x03,
+    GetSblVersion = 0x07,
+    GetCommandIdList = 0x08,
+    GetTrainingData = 0x09,
+}
 
-const TRANSFER_SIZE: usize = 4096;
+// Taken from Linaro's code
+// const TRANSFER_SIZE: usize = 0x1000;
+// Should suffice; we get this as max_len in chips we tried.
+const TRANSFER_SIZE: usize = 0x400;
 
-fn usb_read(i: &Interface, addr: u8) -> [u8; TRANSFER_SIZE] {
-    let mut buf = [0_u8; TRANSFER_SIZE];
+fn usb_read_n(i: &Interface, addr: u8, size: usize) -> Vec<u8> {
+    let mut buf = vec![0_u8; size];
 
     let _: Result<usize> = {
         let timeout = Duration::from_secs(5);
         let fut = async {
-            let b = RequestBuffer::new(TRANSFER_SIZE);
+            let b = RequestBuffer::new(size);
             let comp = i.bulk_in(addr, b).await;
             comp.status.map_err(io::Error::other)?;
 
@@ -217,10 +288,15 @@ fn usb_read(i: &Interface, addr: u8) -> [u8; TRANSFER_SIZE] {
         }))
     };
 
-    let b = &buf[..128];
+    let l = if buf.len() < 128 { buf.len() } else { 128 };
+    let b = &buf[..l];
     debug!("Device says: {b:02x?}");
 
     buf
+}
+
+fn usb_read(i: &Interface, addr: u8) -> Vec<u8> {
+    usb_read_n(i, addr, TRANSFER_SIZE)
 }
 
 fn usb_send(i: &Interface, addr: u8, data: Vec<u8>) {
@@ -240,39 +316,48 @@ fn usb_send(i: &Interface, addr: u8, data: Vec<u8>) {
     };
 }
 
-pub fn hello(i: &Interface, e_in_addr: u8) {
+// TODO: return Mode
+pub fn hello(i: &Interface, e_in_addr: u8) -> u32 {
     let b = &usb_read(i, e_in_addr);
     let (req, _) = HelloRequest::read_from_prefix(b).unwrap();
-    debug!("Request: {req:#02x?}");
-    let cmd = req.header.command;
-    assert_eq!(cmd, COMMAND_HELLO_REQUEST);
+    info!("Hello request: {req:#02x?}");
+    let mt = req.header.message_type;
+    assert_eq!(mt, SAHARA_HELLO_REQUEST);
+    req.mode
 }
 
-fn switch_mode_to_command(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
+pub fn switch_mode(i: &Interface, e_in_addr: u8, e_out_addr: u8, mode: Mode) {
     // As unusual as it is, we get a _request_ first, so we _send a response_.
     // See hello() in which we take the request.
     let res = HelloResponse {
         header: PacketHeader {
-            command: COMMAND_HELLO_RESPONSE,
-            length: 0x30,
+            message_type: SAHARA_HELLO_RESPONSE,
+            length: HELLO_RESPONSE_SIZE,
         },
         version: 2,
-        compatible: 1, // aka version_min
-        status: 0,     // aka max_cmd_len
-        mode: MODE_COMMAND,
+        compatible: 1,
+        status: 0,
+        mode: mode as u32,
+        // The protocol expects either 0x14 or 0x30 bytes. Fill the rest.
+        rest: [0, 0, 0, 0, 0, 0],
     };
     debug!("send {res:#02x?}");
-    let mut r = res.as_bytes().to_vec();
-    // We got this from https://github.com/bkerler/edl.
-    // see edlclient/Library/sahara.py cmd_hello()
-    let ottffs = [1u32, 2, 3, 4, 5, 6].as_bytes().to_vec();
-    r.append(&mut ottffs.to_vec());
+    let r = res.as_bytes().to_vec();
     usb_send(i, e_out_addr, r);
 
     let b = &usb_read(i, e_in_addr);
     let (header, _) = PacketHeader::read_from_prefix(b).unwrap();
-    let cmd = header.command;
-    assert_eq!(cmd, COMMAND_READY);
+    let mt = header.message_type;
+    if mt == SAHARA_END_OF_TRANSFER {
+        let (eot, _) = EndOfTransfer::read_from_prefix(b).unwrap();
+        let status = eot.status;
+        let msg = crate::errors::error_code_to_str(status);
+        error!("Mode switch failed with status {status:02x}: {msg}");
+    }
+    if mt != SAHARA_READY {
+        println!("Mode switch failed, got message: {mt:02x}");
+        // panic!();
+    }
 }
 
 // NOTE: This is a two-step thing. Read the data response afterwards,
@@ -280,28 +365,46 @@ fn exec(
     i: &Interface,
     e_in_addr: u8,
     e_out_addr: u8,
-    exec_cmd: u32,
+    command: Command,
 ) -> std::result::Result<(), String> {
-    // TODO: struct
-    let r = [COMMAND_EXECUTE_REQUEST, 0xc, exec_cmd];
-    usb_send(i, e_out_addr, r.as_bytes().to_vec());
+    let cmd = command as u32;
+    let packet = Exec {
+        header: PacketHeader {
+            message_type: SAHARA_EXECUTE_REQUEST,
+            length: EXEC_SIZE,
+        },
+        command: command as u32,
+    };
+    let r = packet.as_bytes().to_vec();
+    usb_send(i, e_out_addr, r);
 
     let b = &usb_read(i, e_in_addr);
     let (header, _) = PacketHeader::read_from_prefix(b).unwrap();
-    let cmd = header.command;
-    // NOTE: this may get a SAHARA_END_TRANSFER; may mean command not found
-    if cmd != COMMAND_EXECUTE_RESPONSE {
-        return Err(format!("xx maybe cmd invalid {cmd:02x}"));
+    let mt = header.message_type;
+    if mt == SAHARA_END_OF_TRANSFER {
+        let (eot, _) = EndOfTransfer::read_from_prefix(b).unwrap();
+        let status = eot.status;
+        let msg = crate::errors::error_code_to_str(status);
+        return Err(format!("Command failed with status {status:02x}: {msg}"));
+    }
+    if mt != SAHARA_EXECUTE_RESPONSE {
+        return Err(format!("Unexpected message type {mt:02x}"));
     }
 
-    let r = [COMMAND_EXECUTE_DATA, 0xc, exec_cmd];
-    usb_send(i, e_out_addr, r.as_bytes().to_vec());
+    let packet = Exec {
+        header: PacketHeader {
+            message_type: SAHARA_EXECUTE_DATA,
+            length: EXEC_SIZE,
+        },
+        command: command as u32,
+    };
+    let r = packet.as_bytes().to_vec();
+    usb_send(i, e_out_addr, r);
     Ok(())
 }
 
 pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
-    switch_mode_to_command(i, e_in_addr, e_out_addr);
-    exec(i, e_in_addr, e_out_addr, EXEC_GET_HARDWARE_ID).unwrap();
+    exec(i, e_in_addr, e_out_addr, Command::GetHardwareId).unwrap();
     let b = &usb_read(i, e_in_addr);
     let (d, _) = HardwareId::read_from_prefix(b).unwrap();
     let HardwareId { model, oem, id } = d;
@@ -311,14 +414,14 @@ pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     println!("OEM: {model:04x}");
     println!("Model: {oem:04x}");
 
-    exec(i, e_in_addr, e_out_addr, EXEC_GET_SERIAL_NUM).unwrap();
+    exec(i, e_in_addr, e_out_addr, Command::GetSerialNum).unwrap();
     let b = &usb_read(i, e_in_addr);
     let (d, _) = SerialNo::read_from_prefix(b).unwrap();
     // TODO: Which bytes do we really need?
     let serial = d.serial;
     println!("Serial number: {serial:02x?}");
 
-    exec(i, e_in_addr, e_out_addr, EXEC_GET_OEM_PK_HASH).unwrap();
+    exec(i, e_in_addr, e_out_addr, Command::GetOemPkHash).unwrap();
     let b = &usb_read(i, e_in_addr);
     // There is a condition in https://github.com/bkerler/edl that searches for
     // a second occurrence of the first 4 bytes again in the other bytes, then
@@ -334,4 +437,113 @@ pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     println!("  {hash1:02x?}");
     println!("  {hash2:02x?}");
     println!("  {hash3:02x?}");
+
+    if false {
+        match exec(i, e_in_addr, e_out_addr, Command::GetSblVersion) {
+            Ok(()) => {
+                let b = &usb_read(i, e_in_addr)[..64];
+                println!("SBL version {b:02x?}");
+            }
+            Err(e) => {
+                println!("Getting SBL version failed: {e}");
+            }
+        }
+        match exec(i, e_in_addr, e_out_addr, Command::GetCommandIdList) {
+            Ok(()) => {
+                let b = &usb_read(i, e_in_addr)[..64];
+                println!("Command ID list {b:02x?}");
+            }
+            Err(e) => {
+                println!("Getting command ID list failed: {e}");
+            }
+        }
+    }
+}
+
+pub fn run(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
+    //
+}
+
+pub fn read_mem(i: &Interface, e_in_addr: u8, e_out_addr: u8, address: u32) {
+    switch_mode(i, e_in_addr, e_out_addr, Mode::MemoryDebug);
+
+    let size = 0x10;
+
+    let packet = MemoryRead32 {
+        header: PacketHeader {
+            message_type: SAHARA_MEMORY_READ,
+            length: MEMORY_READ_SIZE,
+        },
+        address,
+        size,
+    };
+    let r = packet.as_bytes().to_vec();
+    usb_send(i, e_out_addr, r);
+
+    let res = &usb_read_n(i, e_in_addr, size as usize);
+    let (header, _) = PacketHeader::read_from_prefix(res).unwrap();
+    let mt = header.message_type;
+    if mt == SAHARA_END_OF_TRANSFER {
+        let (eot, _) = EndOfTransfer::read_from_prefix(res).unwrap();
+        let status = eot.status;
+        let msg = crate::errors::error_code_to_str(status);
+        panic!("Reading memory failed with status {status:02x}: {msg}");
+    }
+
+    info!("{res:02x?}");
+}
+
+pub fn reset(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
+    let packet = ResetRequest {
+        header: PacketHeader {
+            message_type: SAHARA_RESET_REQUEST,
+            length: RESET_REQUEST_SIZE,
+        },
+    };
+    let r = packet.as_bytes().to_vec();
+    usb_send(i, e_out_addr, r);
+
+    let res = &usb_read(i, e_in_addr)[..32];
+    let (header, _) = PacketHeader::read_from_prefix(res).unwrap();
+    let mt = header.message_type;
+    if mt == SAHARA_END_OF_TRANSFER {
+        let (eot, _) = EndOfTransfer::read_from_prefix(res).unwrap();
+        let status = eot.status;
+        let msg = crate::errors::error_code_to_str(status);
+        panic!("Reset failed with status {status:02x}: {msg}");
+    }
+
+    if mt == SAHARA_RESET_RESPONSE {
+        info!("Reset successful: {res:02x?}");
+    } else {
+        info!("Reset got unexpected response: {res:02x?}");
+    }
+}
+
+pub fn end(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
+    switch_mode(i, e_in_addr, e_out_addr, Mode::ImageTxPending);
+
+    let packet = DoneRequest {
+        header: PacketHeader {
+            message_type: SAHARA_DONE_REQUEST,
+            length: DONE_REQUEST_SIZE,
+        },
+    };
+    let r = packet.as_bytes().to_vec();
+    usb_send(i, e_out_addr, r);
+
+    let res = &usb_read(i, e_in_addr)[..32];
+    let (header, _) = PacketHeader::read_from_prefix(res).unwrap();
+    let mt = header.message_type;
+    if mt == SAHARA_END_OF_TRANSFER {
+        let (eot, _) = EndOfTransfer::read_from_prefix(res).unwrap();
+        let status = eot.status;
+        let msg = crate::errors::error_code_to_str(status);
+        panic!("Done failed with status {status:02x}: {msg}");
+    }
+
+    if mt == SAHARA_DONE_RESPONSE {
+        info!("Got done response {res:02x?}");
+    }
+    info!("Got  {res:02x?}");
 }

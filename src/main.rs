@@ -2,6 +2,7 @@ use std::{fs::File, io::BufReader};
 
 use clap::{Parser, Subcommand};
 
+mod errors;
 mod hwids;
 mod protocol;
 
@@ -20,6 +21,22 @@ enum Command {
         address: u32,
         file_name: String,
     },
+    /// End the transfer?
+    #[clap(verbatim_doc_comment)]
+    End,
+    /// Reset the platform (?)
+    #[clap(verbatim_doc_comment)]
+    Reset,
+    /// Dump memory to file
+    #[clap(verbatim_doc_comment)]
+    Read {
+        #[clap(long, short, value_parser=clap_num::maybe_hex::<u32>, default_value = SRAM_RUN_BASE)]
+        address: u32,
+        file_name: String,
+    },
+    /// Parse MBN binary file
+    #[clap(verbatim_doc_comment)]
+    Parse { file_name: String },
     /// Run binary code from file
     #[clap(verbatim_doc_comment)]
     Run {
@@ -36,6 +53,8 @@ struct Cli {
     /// Command to run
     #[command(subcommand)]
     cmd: Command,
+    #[clap(long, short, action)]
+    skip_hello: bool,
 }
 
 fn main() {
@@ -43,14 +62,61 @@ fn main() {
     let env = env_logger::Env::default().default_filter_or("info");
     env_logger::Builder::from_env(env).init();
 
-    let cmd = Cli::parse().cmd;
-
-    let (i, e_in_addr, e_out_addr) = protocol::connect();
-
-    protocol::hello(&i, e_in_addr);
+    let Cli { cmd, skip_hello } = Cli::parse();
 
     match cmd {
-        Command::Info => protocol::info(&i, e_in_addr, e_out_addr),
+        Command::Info => {
+            let (i, e_in_addr, e_out_addr) = protocol::connect();
+            if !skip_hello {
+                protocol::hello(&i, e_in_addr);
+            }
+
+            protocol::switch_mode(&i, e_in_addr, e_out_addr, protocol::Mode::Command);
+            protocol::info(&i, e_in_addr, e_out_addr)
+        }
+        Command::End => {
+            let (i, e_in_addr, e_out_addr) = protocol::connect();
+            if !skip_hello {
+                protocol::hello(&i, e_in_addr);
+            }
+
+            protocol::end(&i, e_in_addr, e_out_addr);
+        }
+        Command::Reset => {
+            let (i, e_in_addr, e_out_addr) = protocol::connect();
+            if !skip_hello {
+                protocol::hello(&i, e_in_addr);
+            }
+
+            protocol::reset(&i, e_in_addr, e_out_addr);
+        }
+        Command::Read { address, file_name } => {
+            let (i, e_in_addr, e_out_addr) = protocol::connect();
+            if !skip_hello {
+                protocol::hello(&i, e_in_addr);
+            }
+
+            protocol::switch_mode(&i, e_in_addr, e_out_addr, protocol::Mode::MemoryDebug);
+            protocol::read_mem(&i, e_in_addr, e_out_addr, address);
+        }
+        Command::Parse { file_name } => {
+            match mbn::from_elf(file_name.clone()) {
+                Ok(seg) => {
+                    let h = seg.mbn_header;
+                    println!("{h:#02x?}");
+                    return;
+                }
+                Err(e) => println!("Cannot parse as ELF: {e:#02x?}"),
+            };
+            let data = std::fs::read(file_name).unwrap();
+            match mbn::HashTableSegment::parse(&data) {
+                Ok(seg) => {
+                    let h = seg.mbn_header;
+                    println!("{h:?}");
+                }
+                Err(e) => println!("Cannot parse raw hash table segment: {e:#02x?}"),
+            };
+        }
         // TODO
         _ => {}
     }
