@@ -53,8 +53,6 @@ struct Cli {
     /// Command to run
     #[command(subcommand)]
     cmd: Command,
-    #[clap(long, short, action)]
-    skip_hello: bool,
 }
 
 fn main() {
@@ -62,42 +60,40 @@ fn main() {
     let env = env_logger::Env::default().default_filter_or("info");
     env_logger::Builder::from_env(env).init();
 
-    let Cli { cmd, skip_hello } = Cli::parse();
+    let Cli { cmd } = Cli::parse();
 
     match cmd {
         Command::Info => {
             let (i, e_in_addr, e_out_addr) = protocol::connect();
-            if !skip_hello {
-                protocol::hello(&i, e_in_addr);
-            }
+            let version = protocol::hello(&i, e_in_addr);
 
-            protocol::switch_mode(&i, e_in_addr, e_out_addr, protocol::Mode::Command);
-            protocol::info(&i, e_in_addr, e_out_addr)
+            protocol::switch_mode(&i, version, e_in_addr, e_out_addr, protocol::Mode::Command);
+            protocol::info(&i, version, e_in_addr, e_out_addr)
         }
         Command::End => {
             let (i, e_in_addr, e_out_addr) = protocol::connect();
-            if !skip_hello {
-                protocol::hello(&i, e_in_addr);
-            }
+            let version = protocol::hello(&i, e_in_addr);
 
-            protocol::end(&i, e_in_addr, e_out_addr);
+            protocol::end(&i, version, e_in_addr, e_out_addr);
         }
         Command::Reset => {
             let (i, e_in_addr, e_out_addr) = protocol::connect();
-            if !skip_hello {
-                protocol::hello(&i, e_in_addr);
-            }
+            let version = protocol::hello(&i, e_in_addr);
 
             protocol::reset(&i, e_in_addr, e_out_addr);
         }
         Command::Read { address, file_name } => {
             let (i, e_in_addr, e_out_addr) = protocol::connect();
-            if !skip_hello {
-                protocol::hello(&i, e_in_addr);
-            }
+            let version = protocol::hello(&i, e_in_addr);
 
-            protocol::switch_mode(&i, e_in_addr, e_out_addr, protocol::Mode::MemoryDebug);
-            protocol::read_mem(&i, e_in_addr, e_out_addr, address);
+            protocol::switch_mode(
+                &i,
+                version,
+                e_in_addr,
+                e_out_addr,
+                protocol::Mode::MemoryDebug,
+            );
+            protocol::read_mem(&i, version, e_in_addr, e_out_addr, address);
         }
         Command::Parse { file_name } => {
             match mbn::from_elf(file_name.clone()) {

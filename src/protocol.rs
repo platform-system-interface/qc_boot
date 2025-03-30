@@ -326,7 +326,7 @@ pub fn hello(i: &Interface, e_in_addr: u8) -> u32 {
     req.mode
 }
 
-pub fn switch_mode(i: &Interface, e_in_addr: u8, e_out_addr: u8, mode: Mode) {
+pub fn switch_mode(i: &Interface, version: u32, e_in_addr: u8, e_out_addr: u8, mode: Mode) {
     // As unusual as it is, we get a _request_ first, so we _send a response_.
     // See hello() in which we take the request.
     let res = HelloResponse {
@@ -334,7 +334,7 @@ pub fn switch_mode(i: &Interface, e_in_addr: u8, e_out_addr: u8, mode: Mode) {
             message_type: SAHARA_HELLO_RESPONSE,
             length: HELLO_RESPONSE_SIZE,
         },
-        version: 2,
+        version,
         compatible: 1,
         status: 0,
         mode: mode as u32,
@@ -403,17 +403,7 @@ fn exec(
     Ok(())
 }
 
-pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
-    exec(i, e_in_addr, e_out_addr, Command::GetHardwareId).unwrap();
-    let b = &usb_read(i, e_in_addr);
-    let (d, _) = HardwareId::read_from_prefix(b).unwrap();
-    let HardwareId { model, oem, id } = d;
-    let name = hwids::hwid_to_name(id);
-    println!("Hardware ID: {id:08x} ({name})");
-    // TODO: map OEM + model to string names
-    println!("OEM: {model:04x}");
-    println!("Model: {oem:04x}");
-
+pub fn info(i: &Interface, version: u32, e_in_addr: u8, e_out_addr: u8) {
     exec(i, e_in_addr, e_out_addr, Command::GetSerialNum).unwrap();
     let b = &usb_read(i, e_in_addr);
     let (d, _) = SerialNo::read_from_prefix(b).unwrap();
@@ -421,22 +411,35 @@ pub fn info(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     let serial = d.serial;
     println!("Serial number: {serial:02x?}");
 
-    exec(i, e_in_addr, e_out_addr, Command::GetOemPkHash).unwrap();
-    let b = &usb_read(i, e_in_addr);
-    // There is a condition in https://github.com/bkerler/edl that searches for
-    // a second occurrence of the first 4 bytes again in the other bytes, then
-    // takes [4+p..], where p is the position where it is found again. Wtf?
-    // AFAICT, there is just 3x the same hash.
-    let (d, _) = OemPkHash::read_from_prefix(b).unwrap();
-    let OemPkHash {
-        hash1,
-        hash2,
-        hash3,
-    } = d;
-    println!("OEM PK hashes:");
-    println!("  {hash1:02x?}");
-    println!("  {hash2:02x?}");
-    println!("  {hash3:02x?}");
+    // HWID and OEM public key hash are only for v2 and older
+    if version < 3 {
+        exec(i, e_in_addr, e_out_addr, Command::GetHardwareId).unwrap();
+        let b = &usb_read(i, e_in_addr);
+        let (d, _) = HardwareId::read_from_prefix(b).unwrap();
+        let HardwareId { model, oem, id } = d;
+        let name = hwids::hwid_to_name(id);
+        println!("Hardware ID: {id:08x} ({name})");
+        // TODO: map OEM + model to string names
+        println!("OEM: {model:04x}");
+        println!("Model: {oem:04x}");
+
+        exec(i, e_in_addr, e_out_addr, Command::GetOemPkHash).unwrap();
+        let b = &usb_read(i, e_in_addr);
+        // There is a condition in https://github.com/bkerler/edl that searches for
+        // a second occurrence of the first 4 bytes again in the other bytes, then
+        // takes [4+p..], where p is the position where it is found again. Wtf?
+        // AFAICT, there is just 3x the same hash.
+        let (d, _) = OemPkHash::read_from_prefix(b).unwrap();
+        let OemPkHash {
+            hash1,
+            hash2,
+            hash3,
+        } = d;
+        println!("OEM PK hashes:");
+        println!("  {hash1:02x?}");
+        println!("  {hash2:02x?}");
+        println!("  {hash3:02x?}");
+    }
 
     if false {
         match exec(i, e_in_addr, e_out_addr, Command::GetSblVersion) {
@@ -464,8 +467,8 @@ pub fn run(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     //
 }
 
-pub fn read_mem(i: &Interface, e_in_addr: u8, e_out_addr: u8, address: u32) {
-    switch_mode(i, e_in_addr, e_out_addr, Mode::MemoryDebug);
+pub fn read_mem(i: &Interface, version: u32, e_in_addr: u8, e_out_addr: u8, address: u32) {
+    switch_mode(i, version, e_in_addr, e_out_addr, Mode::MemoryDebug);
 
     let size = 0x10;
 
@@ -520,8 +523,8 @@ pub fn reset(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
     }
 }
 
-pub fn end(i: &Interface, e_in_addr: u8, e_out_addr: u8) {
-    switch_mode(i, e_in_addr, e_out_addr, Mode::ImageTxPending);
+pub fn end(i: &Interface, version: u32, e_in_addr: u8, e_out_addr: u8) {
+    switch_mode(i, version, e_in_addr, e_out_addr, Mode::ImageTxPending);
 
     let packet = DoneRequest {
         header: PacketHeader {
