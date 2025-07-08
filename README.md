@@ -1,4 +1,4 @@
-# Qualcoom mask ROM tool
+# Qualcomm mask ROM tool
 
 This tool lets you interact with Qualcomm SoCs in
 [EDL mode](https://en.wikipedia.org/wiki/Qualcomm_EDL_mode).
