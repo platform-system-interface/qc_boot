@@ -1,3 +1,3 @@
 # Boot Flow
 
-- [MSM9030](./msm8930.md)
+- [Snapdragon 600 / APQ8064](./apq8064.md)
