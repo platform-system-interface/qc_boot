@@ -4,6 +4,14 @@ This tool lets you interact with Qualcomm SoCs in
 [EDL mode](https://en.wikipedia.org/wiki/Qualcomm_EDL_mode).
 Note that Qualcomm has evolved EDL over time.
 
+## Terms 101
+
+- PBL or _Primary Boot Loader_ is Qualcomm's term for the mask ROM aka boot ROM
+- QDL or probably Qualcomm DownLoad is their name for the USB loader mode
+- EDL or Emergency DownLoad is another term for it, and also the GPIO pin
+- Sahara is the binary protocol implemented in QDL/EDL
+- Firehose is a streaming protocol implemented in signed binaries per device
+
 ## Boot flow
 
 Each SoC may have a somewhat different boot flow.
