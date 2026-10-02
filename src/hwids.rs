@@ -42,6 +42,7 @@ pub fn hwid_to_name(id: u32) -> String {
         // our findings
         0x000480E1 => "MDM9207",
         0x007F10E1 => "MDM9225/MDM9265",
+        0x007050e1 => "MDM8916",
         _ => "unknown",
     }
     .to_string()
