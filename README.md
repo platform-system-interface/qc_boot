@@ -2,6 +2,7 @@
 
 This tool lets you interact with Qualcomm SoCs in
 [EDL mode](https://en.wikipedia.org/wiki/Qualcomm_EDL_mode).
+Note that Qualcomm has evolved EDL over time.
 
 **NOTE**: The `qcserial` must not be loaded; TL;DR: `sudo modprobe -r qcserial`
 
