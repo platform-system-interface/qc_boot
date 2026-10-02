@@ -1,5 +1,3 @@
-use std::{fs::File, io::BufReader};
-
 use clap::{Parser, Subcommand};
 
 mod hwids;
